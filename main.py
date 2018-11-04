@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
 
-
 from flask import Flask, jsonify, abort, request
 import hashlib
-import json
+import requests
+
+from cr import ConsistentHashRing
+
 app = Flask(__name__)
 
-tasks = [
-    {
-        'id': 1,
-        'description': u'Milk, Cheese, Pizza, Fruit, Tylenol',
-        'done': False
-    },
-    {
-        'id': 2,
-        'description': u'Need to find a good Python tutorial on the web',
-        'done': False
-    }
-]
+ring = ConsistentHashRing(100)
 
-
-@app.route('/api/v1.0/objects', methods=['GET'])
-def get_tasks():
-    return jsonify({'object': tasks})
+for i in range(0, 10):
+    ring["node%d" % i] = "flatdb-%d" % i
 
 
 @app.route('/healthy', methods=['GET'])
@@ -35,51 +24,48 @@ def ready():
     return jsonify({'ready': 'yes'})
 
 
-@app.route('/api/v1.0/objects', methods=['PUT'])
-def create_task():
+@app.route('/api/v1.0/objects/<name>', methods=['PUT'])
+def update_task(name):
 
     chunk_size = 4096*1024
-
+    data = b""
     m = hashlib.sha1()
+
     while True:
         chunk = request.stream.read(chunk_size)
         if len(chunk) == 0:
             break
 
         m.update(chunk)
+        data += chunk
 
-    task = {
-        'id': tasks[-1]['id'] + 1,
-        'description': m.hexdigest(),
-        'done': False
-    }
-    tasks.append(task)
-    return jsonify({'task': task}), 201
+    node = ring[name]
+    try:
+        response = requests.put(f"http://{node}:5001/putblob",
+                                data=data,
+                                headers={'content-type': 'application/octet-stream'},
+                                params={'key': name},
+                                )
+    except requests.exceptions.ConnectionError:
+        return '', requests.status_codes.codes['service_unavailable']
 
-
-@app.route('/api/v1.0/objects/<int:task_id>', methods=['PUT'])
-def update_task(task_id):
-    task = [task for task in tasks if task['id'] == task_id]
-    print(type(request.json['description']))
-    if len(task) == 0:
-        abort(404)
-    if not request.json:
-        abort(400)
-    if 'description' in request.json and type(request.json['description']) is not str:
-        abort(400)
-    if 'done' in request.json and type(request.json['done']) is not bool:
-        abort(400)
-    task[0]['description'] = request.json.get('description', task[0]['description'])
-    task[0]['done'] = request.json.get('done', task[0]['done'])
-    return jsonify({'task': task[0]})
+    return jsonify({'hash': m.hexdigest()}), response.status_code
 
 
-@app.route('/api/v1.0/objects/<int:task_id>', methods=['GET'])
-def get_task(task_id):
-    task = [task for task in tasks if task['id'] == task_id]
-    if len(task) == 0:
-        abort(404)
-    return jsonify({'task': task[0]})
+@app.route('/api/v1.0/objects/<name>', methods=['GET'])
+def get_task(name):
+    node = ring[name]
+    try:
+        response = requests.get(f"http://{node}:5001/getblob",
+                                {'key': name},
+                                headers={'content-type': 'application/octet-stream'},
+                                )
+    except requests.exceptions.ConnectionError:
+        return '', requests.status_codes.codes['service_unavailable']
+    if response.status_code >= 300:
+        return '', response.status_code
+    else:
+        return response.text, response.status_code
 
 
 if __name__ == '__main__':
