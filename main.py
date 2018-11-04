@@ -85,8 +85,7 @@ def get_from_node(name, copy):
                                 {'key': name},
                                 headers={'Content-Type': 'application/octet-stream'},
                                 )
-        data = response.text
-
+        data = response.content
     except requests.exceptions.ConnectionError:
         logging.exception("GET FAILED")
         return data, requests.status_codes.codes['service_unavailable']
