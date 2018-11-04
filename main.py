@@ -17,7 +17,7 @@ app = Flask(__name__)
 ring = ConsistentHashRing(REPLICAS)
 
 for i in range(NODES):
-    ring["node%d" % i] = "flatdb-%d" % i
+    ring["node%d" % i] = "flatdb-%d.storage" % i
 
 
 @app.route('/healthy', methods=['GET'])
@@ -92,4 +92,4 @@ def get_from_node(name, copy):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0')
+    app.run(debug=False, host='0.0.0.0')
