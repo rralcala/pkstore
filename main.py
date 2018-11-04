@@ -3,14 +3,20 @@
 from flask import Flask, jsonify, abort, request
 import hashlib
 import requests
+import logging
 
 from cr import ConsistentHashRing
 
+COPIES = 3
+REPLICAS = 100
+NODES = 5
+CHUNK_SIZE = 4096*1024
+
 app = Flask(__name__)
 
-ring = ConsistentHashRing(100)
+ring = ConsistentHashRing(REPLICAS)
 
-for i in range(0, 10):
+for i in range(NODES):
     ring["node%d" % i] = "flatdb-%d" % i
 
 
@@ -25,47 +31,64 @@ def ready():
 
 
 @app.route('/api/v1.0/objects/<name>', methods=['PUT'])
-def update_task(name):
-
-    chunk_size = 4096*1024
+def put(name):
     data = b""
     m = hashlib.sha1()
 
     while True:
-        chunk = request.stream.read(chunk_size)
+        chunk = request.stream.read(CHUNK_SIZE)
         if len(chunk) == 0:
             break
 
         m.update(chunk)
         data += chunk
 
-    node = ring[name]
-    try:
-        response = requests.put(f"http://{node}:5001/putblob",
-                                data=data,
-                                headers={'content-type': 'application/octet-stream'},
-                                params={'key': name},
-                                )
-    except requests.exceptions.ConnectionError:
-        return '', requests.status_codes.codes['service_unavailable']
+    return jsonify({'hash': m.hexdigest()}), min(put_in_node(name, data))
 
-    return jsonify({'hash': m.hexdigest()}), response.status_code
+
+def put_in_node(name, data):
+    ret = []
+    for copy in range(COPIES):
+        node = ring[name + str(copy)]
+        try:
+            response = requests.put(f"http://{node}:5001/putblob",
+                                    data=data,
+                                    headers={'content-type': 'application/octet-stream'},
+                                    params={'key': name},
+                                    )
+        except requests.exceptions.ConnectionError:
+            ret.append(requests.status_codes.codes['service_unavailable'])
+            logging.exception("PUT FAILED")
+        ret.append(response.status_code)
+    return ret
 
 
 @app.route('/api/v1.0/objects/<name>', methods=['GET'])
-def get_task(name):
-    node = ring[name]
+def get_object(name):
+    ret = []
+    for copy in range(COPIES):
+        data, code = get_from_node(name, copy)
+        ret.append(code)
+        if code < 300:
+            break
+
+    return data, min(ret)
+
+
+def get_from_node(name, copy):
+    data = b''
+    node = ring[name + str(copy)]
     try:
         response = requests.get(f"http://{node}:5001/getblob",
                                 {'key': name},
                                 headers={'content-type': 'application/octet-stream'},
                                 )
+        data = response.text
+
     except requests.exceptions.ConnectionError:
-        return '', requests.status_codes.codes['service_unavailable']
-    if response.status_code >= 300:
-        return '', response.status_code
-    else:
-        return response.text, response.status_code
+        logging.exception("GET FAILED")
+        return data, requests.status_codes.codes['service_unavailable']
+    return data, response.status_code
 
 
 if __name__ == '__main__':
