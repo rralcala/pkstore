@@ -17,7 +17,7 @@ app = Flask(__name__)
 ring = ConsistentHashRing(REPLICAS)
 
 for i in range(NODES):
-    ring["node%d" % i] = "flatdb-%d" % i
+    ring["node%d" % i] = "flatdb-%d.flatdb.storage" % i
 
 
 @app.route('/healthy', methods=['GET'])
@@ -50,16 +50,18 @@ def put_in_node(name, data):
     ret = []
     for copy in range(COPIES):
         node = ring[name + str(copy)]
+        logging.warning(f"{name} {copy}: {node}")
         try:
             response = requests.put(f"http://{node}:5001/putblob",
                                     data=data,
                                     headers={'Content-Type': 'application/octet-stream'},
                                     params={'key': name},
                                     )
+            ret.append(response.status_code)
         except requests.exceptions.ConnectionError:
             ret.append(requests.status_codes.codes['service_unavailable'])
             logging.exception("PUT FAILED")
-        ret.append(response.status_code)
+
     return ret
 
 
