@@ -17,7 +17,7 @@ app = Flask(__name__)
 ring = ConsistentHashRing(REPLICAS)
 
 for i in range(NODES):
-    ring["node%d" % i] = "flatdb-%d.storage" % i
+    ring["node%d" % i] = "flatdb-%d" % i
 
 
 @app.route('/healthy', methods=['GET'])
@@ -53,7 +53,7 @@ def put_in_node(name, data):
         try:
             response = requests.put(f"http://{node}:5001/putblob",
                                     data=data,
-                                    headers={'content-type': 'application/octet-stream'},
+                                    headers={'Content-Type': 'application/octet-stream'},
                                     params={'key': name},
                                     )
         except requests.exceptions.ConnectionError:
@@ -81,7 +81,7 @@ def get_from_node(name, copy):
     try:
         response = requests.get(f"http://{node}:5001/getblob",
                                 {'key': name},
-                                headers={'content-type': 'application/octet-stream'},
+                                headers={'Content-Type': 'application/octet-stream'},
                                 )
         data = response.text
 
@@ -92,4 +92,4 @@ def get_from_node(name, copy):
 
 
 if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0')
+    app.run(debug=True, host='0.0.0.0')
